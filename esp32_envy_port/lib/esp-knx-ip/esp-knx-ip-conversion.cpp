@@ -82,4 +82,3 @@
  {
    return (float)((data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4]);
  }
- 

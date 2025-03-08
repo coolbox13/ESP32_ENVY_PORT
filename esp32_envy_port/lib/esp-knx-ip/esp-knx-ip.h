@@ -3,12 +3,11 @@
 
 /**
  * esp-knx-ip library for KNX/IP communication on an ESP32
- * Ported from the ESP8266 version by [Your Name]
+ * Ported from the ESP8266 version by Nico Weichbrodt <envy>
  * License: MIT
  */
 
 /* CONFIGURATION */
-#define EEPROM_SIZE               1024
 #define MAX_CALLBACK_ASSIGNMENTS  10
 #define MAX_CALLBACKS             10
 #define MAX_CONFIGS               20
@@ -34,7 +33,7 @@
 #define ESP_KNX_DEBUG
 
 #include "Arduino.h"
-#include <EEPROM.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WebServer.h>
@@ -66,16 +65,12 @@
 
 /* Type Definitions */
 
-/* cemi_addi_t: Additional information structure.
-   Defined only once for both ESP8266 and ESP32.
-*/
 typedef struct __cemi_addi {
     uint8_t type_id;
     uint8_t len;
     uint8_t data[]; // flexible array member (last element)
 } cemi_addi_t;
 
-/* address_t: Used for representing addresses. */
 typedef union __address {
   uint16_t value;
   struct {
@@ -305,8 +300,8 @@ class ESPKNXIP {
     void start(WebServer *srv);
     void loop();
 
-    void save_to_eeprom();
-    void restore_from_eeprom();
+    void save_to_preferences();
+    void restore_from_preferences();
 
     callback_id_t callback_register(String name, callback_fptr_t cb, void *arg = nullptr, enable_condition_t cond = nullptr);
     void          callback_assign(callback_id_t id, address_t val);
@@ -461,6 +456,7 @@ class ESPKNXIP {
     WebServer *server;
     address_t physaddr;
     WiFiUDP udp;
+    Preferences prefs;
 
     callback_assignment_id_t registered_callback_assignments;
     callback_assignment_t callback_assignments[MAX_CALLBACK_ASSIGNMENTS];

@@ -15,19 +15,19 @@
  #define DEBUG_PRINTLN(fmt, ...) ESP_LOGD(DEBUG_TAG, fmt "\n", ##__VA_ARGS__)
  
  ESPKNXIP knx;
-
+ 
  ESPKNXIP::ESPKNXIP() : server(nullptr),
-                        registered_callback_assignments(0),
-                        registered_callbacks(0),
-                        registered_configs(0),
-                        registered_feedbacks(0)
+                      registered_callback_assignments(0),
+                      registered_callbacks(0),
+                      registered_configs(0),
+                      registered_feedbacks(0)
  {
    DEBUG_PRINTLN("ESPKNXIP starting up");
    // Default physical address is 1.1.0
    physaddr.bytes.high = (1 << 4) | 1;
    physaddr.bytes.low = 0;
    memset(callback_assignments, 0, MAX_CALLBACK_ASSIGNMENTS * sizeof(callback_assignment_t));
-   memset(callbacks, 0, MAX_CALLBACKS * sizeof(callback_t));  // Ensure correct size (using callback_t)
+   memset(callbacks, 0, MAX_CALLBACKS * sizeof(callback_t));
    memset(custom_config_data, 0, MAX_CONFIG_SPACE * sizeof(uint8_t));
    memset(custom_config_default_data, 0, MAX_CONFIG_SPACE * sizeof(uint8_t));
    memset(custom_configs, 0, MAX_CONFIGS * sizeof(config_t));
@@ -36,67 +36,67 @@
  void ESPKNXIP::load()
  {
    memcpy(custom_config_default_data, custom_config_data, MAX_CONFIG_SPACE);
-   Preferences prefs;
-   prefs.begin("KNX", false);
-   restore_from_eeprom();
-   prefs.end();
+   restore_from_preferences();
  }
-
- void ESPKNXIP::start(WebServer *srv)  // Use WebServer for ESP32
-{
-  server = srv;
-  __start();
-}
+ 
+ void ESPKNXIP::start(WebServer *srv)
+ {
+   server = srv;
+   if (server == nullptr) {
+     ESP_LOGW(DEBUG_TAG, "No WebServer provided - web interface disabled");
+   }
+   __start();
+ }
+ 
+ void ESPKNXIP::start()
+ {
+   // Don't automatically create a server, just start without web interface
+   ESP_LOGW(DEBUG_TAG, "Starting without WebServer - web interface disabled");
+   server = nullptr;
+   __start();
+ }
  
  void ESPKNXIP::__start()
  {
-   if (server != nullptr)
-   {
-     server->on(ROOT_PREFIX, [this](){
-       __handle_root();
-     });
-     server->on(__ROOT_PATH, [this](){
-       __handle_root();
-     });
-     server->on(__REGISTER_PATH, [this](){
-       __handle_register();
-     });
-     server->on(__DELETE_PATH, [this](){
-       __handle_delete();
-     });
-     server->on(__PHYS_PATH, [this](){
-       __handle_set();
-     });
+   if (server != nullptr) {
+     try {
+       // Register handlers
+       server->on(ROOT_PREFIX, HTTP_GET, [this](){ __handle_root(); });
+       server->on(__ROOT_PATH, HTTP_GET, [this](){ __handle_root(); });
+       server->on(__REGISTER_PATH, HTTP_POST, [this](){ __handle_register(); });
+       server->on(__DELETE_PATH, HTTP_POST, [this](){ __handle_delete(); });
+       server->on(__PHYS_PATH, HTTP_POST, [this](){ __handle_set(); });
  #if !DISABLE_EEPROM_BUTTONS
-     server->on(__EEPROM_PATH, [this](){
-       __handle_eeprom();
-     });
+       server->on(__EEPROM_PATH, HTTP_POST, [this](){ __handle_eeprom(); });
  #endif
-     server->on(__CONFIG_PATH, [this](){
-       __handle_config();
-     });
-     server->on(__FEEDBACK_PATH, [this](){
-       __handle_feedback();
-     });
+       server->on(__CONFIG_PATH, HTTP_POST, [this](){ __handle_config(); });
+       server->on(__FEEDBACK_PATH, HTTP_POST, [this](){ __handle_feedback(); });
  #if !DISABLE_RESTORE_BUTTON
-     server->on(__RESTORE_PATH, [this](){
-       __handle_restore();
-     });
+       server->on(__RESTORE_PATH, HTTP_POST, [this](){ __handle_restore(); });
  #endif
  #if !DISABLE_REBOOT_BUTTON
-     server->on(__REBOOT_PATH, [this](){
-       __handle_reboot();
-     });
+       server->on(__REBOOT_PATH, HTTP_POST, [this](){ __handle_reboot(); });
  #endif
-     server->begin();
+       
+       // Start server
+       server->begin();
+       ESP_LOGI(DEBUG_TAG, "WebServer started successfully");
+     } catch (const std::exception& e) {
+       ESP_LOGE(DEBUG_TAG, "Error starting WebServer: %s", e.what());
+       server = nullptr; // Clear the server reference to prevent further attempts
+     } catch (...) {
+       ESP_LOGE(DEBUG_TAG, "Unknown error starting WebServer");
+       server = nullptr; // Clear the server reference to prevent further attempts
+     }
    }
-   // ESP32: use new UDP multicast API (omit local IP parameter).
+   
+   // Start UDP multicast - this should work even if WebServer fails
    udp.beginMulticast(MULTICAST_IP, MULTICAST_PORT);
+   ESP_LOGI(DEBUG_TAG, "KNX/IP UDP multicast started");
  }
  
- void ESPKNXIP::save_to_eeprom()
+ void ESPKNXIP::save_to_preferences()
  {
-   Preferences prefs;
    prefs.begin("KNX", false);
    uint64_t magic = EEPROM_MAGIC;
    prefs.putBytes("magic", &magic, sizeof(magic));
@@ -108,9 +108,8 @@
    DEBUG_PRINT("Saved to Preferences");
  }
  
- void ESPKNXIP::restore_from_eeprom()
+ void ESPKNXIP::restore_from_preferences()
  {
-   Preferences prefs;
    prefs.begin("KNX", true);
    uint64_t magic = 0;
    size_t len = sizeof(magic);
@@ -256,15 +255,23 @@
  void ESPKNXIP::loop()
  {
    __loop_knx();
-   if (server != nullptr)
-   {
-     __loop_webserver();
+   
+   // Only call WebServer if it exists and is properly initialized
+   if (server != nullptr) {
+     // Wrap in try/catch to prevent crashes
+     try {
+       server->handleClient();
+     } catch (...) {
+       ESP_LOGE(DEBUG_TAG, "Error in WebServer handling");
+     }
    }
  }
  
  void ESPKNXIP::__loop_webserver()
  {
-   server->handleClient();
+   if (server != nullptr) {
+     server->handleClient();
+   }
  }
  
  void ESPKNXIP::__loop_knx()
@@ -272,86 +279,86 @@
    int read = udp.parsePacket();
    if (!read)
      return;
-   DEBUG_PRINTLN(F(""));
-   DEBUG_PRINT(F("LEN: "));
+   DEBUG_PRINTLN("");
+   DEBUG_PRINT("LEN: ");
    DEBUG_PRINTLN(read);
  
    uint8_t buf[read];
    udp.read(buf, read);
    udp.flush();
  
-   DEBUG_PRINT(F("Got packet:"));
+   DEBUG_PRINT("Got packet:");
    for (int i = 0; i < read; ++i)
    {
-     DEBUG_PRINT(F(" 0x"));
+     DEBUG_PRINT(" 0x");
      DEBUG_PRINT(buf[i], 16);
    }
-   DEBUG_PRINTLN(F(""));
+   DEBUG_PRINTLN("");
  
    knx_ip_pkt_t *knx_pkt = (knx_ip_pkt_t *)buf;
-   DEBUG_PRINT(F("ST: 0x"));
+   DEBUG_PRINT("ST: 0x");
    DEBUG_PRINTLN(__ntohs(knx_pkt->service_type), 16);
  
    if (knx_pkt->header_len != 0x06 && knx_pkt->protocol_version != 0x10 && knx_pkt->service_type != KNX_ST_ROUTING_INDICATION)
      return;
  
    cemi_msg_t *cemi_msg = (cemi_msg_t *)knx_pkt->pkt_data;
-   DEBUG_PRINT(F("MT: 0x"));
+   DEBUG_PRINT("MT: 0x");
    DEBUG_PRINTLN(cemi_msg->message_code, 16);
    if (cemi_msg->message_code != KNX_MT_L_DATA_IND)
      return;
  
-   DEBUG_PRINT(F("ADDI: 0x"));
+   DEBUG_PRINT("ADDI: 0x");
    DEBUG_PRINTLN(cemi_msg->additional_info_len, 16);
    cemi_service_t *cemi_data = &cemi_msg->data.service_information;
    if (cemi_msg->additional_info_len > 0)
      cemi_data = (cemi_service_t *)(((uint8_t *)cemi_data) + cemi_msg->additional_info_len);
  
-   DEBUG_PRINT(F("C1: 0x"));
+   DEBUG_PRINT("C1: 0x");
    DEBUG_PRINTLN(cemi_data->control_1.byte, 16);
-   DEBUG_PRINT(F("C2: 0x"));
+   DEBUG_PRINT("C2: 0x");
    DEBUG_PRINTLN(cemi_data->control_2.byte, 16);
-   DEBUG_PRINT(F("DT: 0x"));
+   DEBUG_PRINT("DT: 0x");
    DEBUG_PRINTLN(cemi_data->control_2.bits.dest_addr_type, 16);
    if (cemi_data->control_2.bits.dest_addr_type != 0x01)
      return;
  
-   DEBUG_PRINT(F("HC: 0x"));
+   DEBUG_PRINT("HC: 0x");
    DEBUG_PRINTLN(cemi_data->control_2.bits.hop_count, 16);
-   DEBUG_PRINT(F("EFF: 0x"));
+   DEBUG_PRINT("EFF: 0x");
    DEBUG_PRINTLN(cemi_data->control_2.bits.extended_frame_format, 16);
-   DEBUG_PRINT(F("Source: 0x"));
+   DEBUG_PRINT("Source: 0x");
    DEBUG_PRINT(cemi_data->source.bytes.high, 16);
-   DEBUG_PRINT(F(" 0x"));
+   DEBUG_PRINT(" 0x");
    DEBUG_PRINTLN(cemi_data->source.bytes.low, 16);
-   DEBUG_PRINT(F("Dest: 0x"));
+   DEBUG_PRINT("Dest: 0x");
    DEBUG_PRINT(cemi_data->destination.bytes.high, 16);
-   DEBUG_PRINT(F(" 0x"));
+   DEBUG_PRINT(" 0x");
    DEBUG_PRINTLN(cemi_data->destination.bytes.low, 16);
  
    knx_command_type_t ct = (knx_command_type_t)(((cemi_data->data[0] & 0xC0) >> 6) | ((cemi_data->pci.apci & 0x03) << 2));
-   DEBUG_PRINT(F("CT: 0x"));
+   DEBUG_PRINT("CT: 0x");
    DEBUG_PRINTLN(ct, 16);
    for (int i = 0; i < cemi_data->data_len; ++i)
    {
-     DEBUG_PRINT(F(" 0x"));
+     DEBUG_PRINT(" 0x");
      DEBUG_PRINT(cemi_data->data[i], 16);
    }
-   DEBUG_PRINTLN(F("=="));
+   DEBUG_PRINTLN("==");
  
    // Call callbacks
    for (int i = 0; i < registered_callback_assignments; ++i)
    {
-     DEBUG_PRINT(F("Testing: 0x"));
+     DEBUG_PRINT("Testing: 0x");
      DEBUG_PRINT(callback_assignments[i].address.bytes.high, 16);
-     DEBUG_PRINT(F(" 0x"));
+     DEBUG_PRINT(" 0x");
      DEBUG_PRINTLN(callback_assignments[i].address.bytes.low, 16);
      if (cemi_data->destination.value == callback_assignments[i].address.value)
      {
-       DEBUG_PRINTLN(F("Found match"));
+       DEBUG_PRINTLN("Found match");
        if (callbacks[callback_assignments[i].callback_id].cond && !callbacks[callback_assignments[i].callback_id].cond())
        {
-         DEBUG_PRINTLN(F("But it's disabled"));
+         DEBUG_PRINTLN("But it's disabled");
  #if ALLOW_MULTIPLE_CALLBACKS_PER_ADDRESS
          continue;
  #else
@@ -376,3 +383,12 @@
    }
  }
  
+ void ESPKNXIP::physical_address_set(address_t const &addr)
+ {
+   physaddr = addr;
+ }
+ 
+ address_t ESPKNXIP::physical_address_get()
+ {
+   return physaddr;
+ }
