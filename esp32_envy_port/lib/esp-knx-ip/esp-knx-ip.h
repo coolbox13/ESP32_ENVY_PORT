@@ -36,7 +36,8 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <WebServer.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #include "DPT.h"
 
 #define EEPROM_MAGIC (0xDEADBEEF00000000ULL + (MAX_CONFIG_SPACE) + ((uint64_t)MAX_CALLBACK_ASSIGNMENTS << 16) + ((uint64_t)MAX_CALLBACKS << 8))
@@ -297,7 +298,7 @@ class ESPKNXIP {
     ESPKNXIP();
     void load();
     void start();
-    void start(WebServer *srv);
+    void start(AsyncWebServer *srv);
     void loop();
 
     void save_to_preferences();
@@ -424,21 +425,20 @@ class ESPKNXIP {
     void __loop_knx();
 
     /* Webserver functions */
-    void __loop_webserver();
-    void __handle_root();
-    void __handle_register();
-    void __handle_delete();
-    void __handle_set();
+    void __handle_root(AsyncWebServerRequest *request);
+    void __handle_register(AsyncWebServerRequest *request);
+    void __handle_delete(AsyncWebServerRequest *request);
+    void __handle_set(AsyncWebServerRequest *request);
 #if !DISABLE_EEPROM_BUTTONS
-    void __handle_eeprom();
+    void __handle_eeprom(AsyncWebServerRequest *request);
 #endif
-    void __handle_config();
-    void __handle_feedback();
-#if !DISABLE_RESTORE_BUTTONS
-    void __handle_restore();
+    void __handle_config(AsyncWebServerRequest *request);
+    void __handle_feedback(AsyncWebServerRequest *request);
+#if !DISABLE_RESTORE_BUTTON
+    void __handle_restore(AsyncWebServerRequest *request);
 #endif
-#if !DISABLE_REBOOT_BUTTONS
-    void __handle_reboot();
+#if !DISABLE_REBOOT_BUTTON
+    void __handle_reboot(AsyncWebServerRequest *request);
 #endif
 
     void __config_set_flags(config_id_t id, config_flags_t flags);
@@ -452,8 +452,8 @@ class ESPKNXIP {
     callback_assignment_id_t __callback_register_assignment(address_t address, callback_id_t id);
     void __callback_delete_assignment(callback_assignment_id_t id);
 
-    /* Use the ESP32 WebServer type */
-    WebServer *server;
+    /* Use the ESP32 AsyncWebServer type */
+    AsyncWebServer *server;
     address_t physaddr;
     WiFiUDP udp;
     Preferences prefs;
